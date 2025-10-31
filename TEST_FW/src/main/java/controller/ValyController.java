@@ -1,6 +1,6 @@
 package controller;
 
-import annotation.Controller;
+import com.framework.annotation.Controller;
 
 @Controller
 public class ValyController {

@@ -1,5 +1,5 @@
-import annotation.Controller;
-import util.ControllerScanner;
+import com.framework.annotation.Controller;
+import com.framework.annotation.ControllerScanner;
 
 public class Main {
     public static void main(String[] args) {

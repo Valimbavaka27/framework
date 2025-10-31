@@ -1,4 +1,4 @@
-package annotation;
+package com.framework.annotation;
 
 public class TestAnnotation {
     @Route(url = "/hello")

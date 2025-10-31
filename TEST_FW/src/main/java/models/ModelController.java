@@ -1,6 +1,6 @@
 package models;
 
-import annotation.Controller;
+import com.framework.annotation.Controller;
 
 @Controller
 public class ModelController {
