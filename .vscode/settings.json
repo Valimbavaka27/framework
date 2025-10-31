@@ -1,0 +1,6 @@
+{
+    "java.project.referencedLibraries": [
+        "lib/**/*.jar",
+        "TEST_FW/lib/FrameworkServlet.jar"
+    ]
+}
