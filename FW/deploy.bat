@@ -6,7 +6,7 @@ set SRC_DIR=src\main\java
 set BUILD_DIR=build
 set LIB_DIR=lib
 set SERVLET_API_JAR=%LIB_DIR%\servlet-api.jar
-set TEST_LIB_DIR=..\TEST_FW\lib
+set TEST_LIB_DIR=..\test_framework\TEST_FW\lib
 
 :: Nettoyage
 if exist %BUILD_DIR% (
