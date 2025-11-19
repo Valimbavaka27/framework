@@ -4,12 +4,36 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.Map;
+import java.lang.reflect.Method;
+import com.framework.annotation.ControllerScanner;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletConfig;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 public class FrontServlet extends HttpServlet {
+
+    @Override
+    public void init(ServletConfig config) throws ServletException {
+        super.init(config);
+        String pkg = null;
+        if (config != null) {
+            pkg = config.getInitParameter("scanPackage");
+        }
+        if (pkg == null || pkg.isEmpty()) {
+            if (getServletContext() != null) {
+                pkg = getServletContext().getInitParameter("scanPackage");
+            }
+        }
+        try {
+            Map<String, Method> mappings = ControllerScanner.scanRoutes(pkg);
+            getServletContext().setAttribute("routeMappings", mappings);
+        } catch (Exception e) {
+            throw new ServletException(e);
+        }
+    }
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp)
@@ -32,6 +56,19 @@ public class FrontServlet extends HttpServlet {
         if (path == null || path.isEmpty() || "/".equals(path)) {
             // Page d’accueil par défaut
             path = "/index.html";
+        }
+
+        @SuppressWarnings("unchecked")
+        Map<String, Method> routeMappings = (Map<String, Method>) getServletContext().getAttribute("routeMappings");
+        if (routeMappings != null) {
+            Method m = routeMappings.get(path);
+            if (m != null) {
+                resp.setContentType("text/plain");
+                resp.getWriter().println("URL supportée : " + path);
+                resp.getWriter().println("Classe : " + m.getDeclaringClass().getName());
+                resp.getWriter().println("Méthode : " + m.getName());
+                return;
+            }
         }
 
         // Cherche le fichier directement dans webapp/
