@@ -6,6 +6,10 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+import java.lang.reflect.Method;
+import java.lang.annotation.Annotation;
 
 public class ControllerScanner {
     
@@ -17,7 +21,6 @@ public class ControllerScanner {
         if (baseDir.exists()) {
             scanDirectory(baseDir, "", controllers);
         } else {
-            // Si on est dans un JAR ou autre, on essaie avec le classloader
             ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
             Enumeration<URL> resources = classLoader.getResources("");
             
@@ -56,14 +59,19 @@ public class ControllerScanner {
                     }
                     
                     Class<?> clazz = Class.forName(className);
-                    if (clazz.isAnnotationPresent(Controller.class)) {
-                        controllers.add(clazz);
+                    try {
+                        @SuppressWarnings("unchecked")
+                        Class<? extends Annotation> controllerAnnotation = (Class<? extends Annotation>) Class.forName("com.framework.annotation.Controller");
+                        if (clazz.isAnnotationPresent(controllerAnnotation)) {
+                            controllers.add(clazz);
+                        }
+                    } catch (ClassNotFoundException ignore) {
                     }
                 } catch (ClassNotFoundException e) {
                     System.err.println("Classe non trouvée: " + e.getMessage());
                 }
             }
-        }
+        } 
     }
     
     private static void findControllersInDirectory(File directory, String packageName, List<Class<?>> controllers) 
@@ -76,18 +84,70 @@ public class ControllerScanner {
                 findControllersInDirectory(file, packageName + "." + file.getName(), controllers);
             } else if (file.getName().endsWith(".class")) {
                 String className = packageName + '.' + file.getName().substring(0, file.getName().length() - 6);
-                // Nettoyer le nom de la classe pour les chemins Windows
                 className = className.replace("\\", ".").replace("/", ".");
                 if (className.startsWith(".")) {
                     className = className.substring(1);
                 }
                 try {
                     Class<?> clazz = Class.forName(className);
-                    if (clazz.isAnnotationPresent(Controller.class)) {
-                        controllers.add(clazz);
+                    try {
+                        @SuppressWarnings("unchecked")
+                        Class<? extends Annotation> controllerAnnotation = (Class<? extends Annotation>) Class.forName("com.framework.annotation.Controller");
+                        if (clazz.isAnnotationPresent(controllerAnnotation)) {
+                            controllers.add(clazz);
+                        }
+                    } catch (ClassNotFoundException ignore) {
                     }
                 } catch (NoClassDefFoundError | ClassNotFoundException e) {
-                    // Ignorer les classes qui ne peuvent pas être chargées
+                }
+            }
+        }
+    }
+
+    public static Map<String, Method> scanRoutes(String basePackage) throws IOException {
+        Map<String, Method> routes = new HashMap<>();
+        String packagePath = basePackage == null ? "" : basePackage.replace('.', '/');
+
+        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        Enumeration<URL> resources = classLoader.getResources(packagePath);
+
+        while (resources.hasMoreElements()) {
+            URL resource = resources.nextElement();
+            File directory = new File(resource.getFile());
+            if (directory.exists() && directory.isDirectory()) {
+                collectRoutesInDirectory(directory, basePackage == null ? "" : basePackage, routes);
+            }
+        }
+
+        return routes;
+    }
+
+    private static void collectRoutesInDirectory(File directory, String packageName, Map<String, Method> routes) {
+        File[] files = directory.listFiles();
+        if (files == null) return;
+
+        for (File file : files) {
+            if (file.isDirectory()) {
+                String subPkg = packageName == null || packageName.isEmpty()
+                        ? file.getName()
+                        : packageName + "." + file.getName();
+                collectRoutesInDirectory(file, subPkg, routes);
+            } else if (file.getName().endsWith(".class")) {
+                String className = (packageName == null || packageName.isEmpty())
+                        ? file.getName().substring(0, file.getName().length() - 6)
+                        : packageName + '.' + file.getName().substring(0, file.getName().length() - 6);
+                className = className.replace('\\', '.').replace('/', '.');
+                if (className.startsWith(".")) className = className.substring(1);
+                try {
+                    Class<?> clazz = Class.forName(className);
+                    for (Method m : clazz.getDeclaredMethods()) {
+                        if (m.isAnnotationPresent(Route.class)) {
+                            Route r = m.getAnnotation(Route.class);
+                            String url = r.url();
+                            routes.put(url, m);
+                        }
+                    }
+                } catch (Throwable ignore) {
                 }
             }
         }
