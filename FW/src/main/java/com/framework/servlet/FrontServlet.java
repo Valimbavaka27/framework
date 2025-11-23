@@ -9,6 +9,8 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.lang.reflect.Method;
+
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -72,45 +74,65 @@ public class FrontServlet extends HttpServlet {
     }
 
     private void handleRequest(HttpServletRequest req, HttpServletResponse resp)
-            throws ServletException, IOException {
+        throws ServletException, IOException {
 
-        // Récupère le chemin demandé après le contexte
-        String path = req.getRequestURI().substring(req.getContextPath().length());
-        String httpMethod = req.getMethod().toUpperCase();
+    String path = req.getRequestURI().substring(req.getContextPath().length());
+    String httpMethod = req.getMethod().toUpperCase();
 
-        // Récupère le MappingStore du ServletContext
-        MappingStore mappingStore = (MappingStore) getServletContext().getAttribute(MAPPING_STORE_KEY);
+    MappingStore mappingStore = (MappingStore) getServletContext().getAttribute(MAPPING_STORE_KEY);
 
-        if (mappingStore == null) {
-            resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-            resp.setContentType("text/plain; charset=UTF-8");
-            resp.getWriter().println("Erreur: MappingStore non initialisé");
-            return;
-        }
-
-        // Cherche le mapping correspondant
-        AnnotationStore annotationStore = mappingStore.findMapping(path, httpMethod);
-
-        if (annotationStore != null) {
-            // Mapping trouvé - affiche les informations
-            resp.setContentType("text/plain; charset=UTF-8");
-            PrintWriter out = resp.getWriter();
-            
-            out.println("========== MAPPING TROUVÉ ==========");
-            out.println("URL demandée: " + path);
-            out.println("Méthode HTTP: " + httpMethod);
-            out.println("------------------------------------");
-            out.println("Classe: " + annotationStore.getClazz().getName());
-            out.println("Méthode: " + annotationStore.getMethod().getName());
-            out.println("URL complète du mapping: " + annotationStore.getFullUrl());
-            out.println("====================================");
-            
-        } else {
-            // Aucun mapping trouvé - essaie de servir un fichier statique
-            servirRessource(req, resp, path);
-        }
+    if (mappingStore == null) {
+        resp.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "MappingStore non initialisé");
+        return;
     }
 
+    AnnotationStore annotationStore = mappingStore.findMapping(path, httpMethod);
+
+    if (annotationStore != null) {
+        try {
+            // Instanciation du contrôleur
+            Object controller = annotationStore.getClazz().getDeclaredConstructor().newInstance();
+            Method method = annotationStore.getMethod();
+            method.setAccessible(true);
+
+            // Exécution de la méthode
+            Object result = method.invoke(controller);
+
+            // NOUVELLE CONDITION DEMANDÉE : si retour = String → on l'écrit directement
+            if (result instanceof String) {
+                String responseText = (String) result;
+
+                // Tu as dit : on veut toujours text/plain (sauf si tu changes d'avis plus tard)
+                resp.setContentType("text/plain; charset=UTF-8");
+                resp.setCharacterEncoding("UTF-8");
+
+                PrintWriter out = resp.getWriter();
+                out.print(responseText);   // pas de println() → pas de saut de ligne en trop
+                out.flush();
+                return; // très important : on arrête tout ici
+            }
+
+            // Si ce n'est PAS une String → on garde le comportement de debug actuel
+            resp.setContentType("text/plain; charset=UTF-8");
+            PrintWriter out = resp.getWriter();
+            out.println("========== MAPPING TROUVÉ ==========");
+            out.println("URL: " + path);
+            out.println("Méthode HTTP: " + httpMethod);
+            out.println("Classe: " + annotationStore.getClazz().getName());
+            out.println("Méthode: " + method.getName());
+            out.println("Retour: " + (result != null ? result : "void"));
+            out.println("====================================");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            resp.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, 
+                "Erreur dans le contrôleur : " + e.getCause());
+        }
+
+    } else {
+        servirRessource(req, resp, path);
+    }
+}
     private void servirRessource(HttpServletRequest req, HttpServletResponse resp, String path)
             throws ServletException, IOException {
 
