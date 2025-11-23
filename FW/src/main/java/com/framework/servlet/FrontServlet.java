@@ -11,7 +11,11 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.lang.reflect.Method;
 
+import java.util.Map;
+import java.lang.reflect.Method;
+import com.framework.annotation.ControllerScanner;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletConfig;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -46,6 +50,26 @@ public class FrontServlet extends HttpServlet {
         } catch (Exception e) {
             e.printStackTrace();
             throw new ServletException("Erreur lors de l'initialisation du FrontServlet", e);
+        }
+    }
+
+    @Override
+    public void init(ServletConfig config) throws ServletException {
+        super.init(config);
+        String pkg = null;
+        if (config != null) {
+            pkg = config.getInitParameter("scanPackage");
+        }
+        if (pkg == null || pkg.isEmpty()) {
+            if (getServletContext() != null) {
+                pkg = getServletContext().getInitParameter("scanPackage");
+            }
+        }
+        try {
+            Map<String, Method> mappings = ControllerScanner.scanRoutes(pkg);
+            getServletContext().setAttribute("routeMappings", mappings);
+        } catch (Exception e) {
+            throw new ServletException(e);
         }
     }
 
@@ -138,6 +162,19 @@ public class FrontServlet extends HttpServlet {
 
         if (path == null || path.isEmpty() || "/".equals(path)) {
             path = "/index.html";
+        }
+
+        @SuppressWarnings("unchecked")
+        Map<String, Method> routeMappings = (Map<String, Method>) getServletContext().getAttribute("routeMappings");
+        if (routeMappings != null) {
+            Method m = routeMappings.get(path);
+            if (m != null) {
+                resp.setContentType("text/plain");
+                resp.getWriter().println("URL supportée : " + path);
+                resp.getWriter().println("Classe : " + m.getDeclaringClass().getName());
+                resp.getWriter().println("Méthode : " + m.getName());
+                return;
+            }
         }
 
         // Cherche le fichier directement dans webapp/
