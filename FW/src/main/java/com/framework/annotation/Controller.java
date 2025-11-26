@@ -8,5 +8,5 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
 public @interface Controller {
-    String url() default "";
+    String url() default "";   // on remet "url()" pour que ton code compile
 }

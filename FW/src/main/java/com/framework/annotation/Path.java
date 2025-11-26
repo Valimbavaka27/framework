@@ -8,6 +8,6 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
 public @interface Path {
-    String url() default "";
-    String method() default "GET"; // GET, POST, PUT, DELETE
+    String url() default "";           // on remet "url()"
+    String method() default "GET";     // on remet "method()"
 }
