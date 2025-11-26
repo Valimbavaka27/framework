@@ -3,47 +3,20 @@ package com.framework.mapping;
 import java.lang.reflect.Method;
 
 public class AnnotationStore {
-    private Class<?> clazz;
-    private Method method;
-    private String fullUrl;
-    private String httpMethod; // GET, POST, etc.
+    private final Class<?> controllerClass;
+    private final Method method;
+    private final String url;
+    private final String httpMethod;
 
-    public AnnotationStore(Class<?> clazz, Method method, String fullUrl, String httpMethod) {
-        this.clazz = clazz;
+    public AnnotationStore(Class<?> controllerClass, Method method, String url, String httpMethod) {
+        this.controllerClass = controllerClass;
         this.method = method;
-        this.fullUrl = fullUrl;
+        this.url = url;
         this.httpMethod = httpMethod;
     }
 
-    public Class<?> getClazz() {
-        return clazz;
-    }
-
-    public void setClazz(Class<?> clazz) {
-        this.clazz = clazz;
-    }
-
-    public Method getMethod() {
-        return method;
-    }
-
-    public void setMethod(Method method) {
-        this.method = method;
-    }
-
-    public String getFullUrl() {
-        return fullUrl;
-    }
-
-    public void setFullUrl(String fullUrl) {
-        this.fullUrl = fullUrl;
-    }
-
-    public String getHttpMethod() {
-        return httpMethod;
-    }
-
-    public void setHttpMethod(String httpMethod) {
-        this.httpMethod = httpMethod;
-    }
+    public Class<?> getControllerClass() { return controllerClass; }
+    public Method getMethod() { return method; }
+    public String getUrl() { return url; }
+    public String getHttpMethod() { return httpMethod; }
 }

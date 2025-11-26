@@ -1,6 +1,7 @@
 package com.framework.scanner;
 
 import com.framework.annotation.Controller;
+import com.framework.annotation.Path;
 import com.framework.mapping.AnnotationStore;
 import com.framework.mapping.MappingStore;
 
@@ -15,134 +16,87 @@ import java.util.jar.JarFile;
 
 public class ControllerScanner {
 
-    /**
-     * Scanne un package pour trouver les classes annotées avec @Controller
-     */
-    public static MappingStore scanPackage(String packageName) throws Exception {
-        MappingStore mappingStore = new MappingStore();
+    public static MappingStore scan(String packageName) throws Exception {
+        MappingStore store = new MappingStore();
         List<Class<?>> classes = findClasses(packageName);
 
         for (Class<?> clazz : classes) {
             if (clazz.isAnnotationPresent(Controller.class)) {
-                processController(clazz, mappingStore);
+                registerController(clazz, store);
             }
         }
-
-        return mappingStore;
+        return store;
     }
 
-    /**
-     * Nouvelle méthode robuste : trouve toutes les classes du package,
-     * que ce soit dans un dossier ou dans un JAR
-     */
+private static void registerController(Class<?> clazz, MappingStore store) {
+    Controller ctrl = clazz.getAnnotation(Controller.class);
+    String baseUrl = ctrl.url();                     // ← url()
+    if (!baseUrl.startsWith("/")) baseUrl = "/" + baseUrl;
+    if (baseUrl.endsWith("/")) baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+
+    for (var method : clazz.getDeclaredMethods()) {
+        if (method.isAnnotationPresent(Path.class)) {
+            Path path = method.getAnnotation(Path.class);
+            String methodUrl = path.url();           // ← url()
+            String httpMethod = path.method();       // ← method()
+
+            if (!methodUrl.startsWith("/")) methodUrl = "/" + methodUrl;
+            String fullUrl = (baseUrl + methodUrl).replaceAll("/+", "/");
+            if ("/".equals(fullUrl)) fullUrl = "/";
+
+            String key = httpMethod.toUpperCase() + ":" + fullUrl;
+            store.addMapping(key, new AnnotationStore(clazz, method, fullUrl, httpMethod.toUpperCase()));
+
+            System.out.println("Mapped " + key + " → " + clazz.getSimpleName() + "." + method.getName() + "()");
+        }
+    }
+}
+
     private static List<Class<?>> findClasses(String packageName) throws Exception {
         List<Class<?>> classes = new ArrayList<>();
         String path = packageName.replace('.', '/');
-        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
-        Enumeration<URL> resources = classLoader.getResources(path);
+        ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        Enumeration<URL> resources = cl.getResources(path);
 
         while (resources.hasMoreElements()) {
             URL resource = resources.nextElement();
-            String protocol = resource.getProtocol();
-
-            if ("file".equals(protocol)) {
-                // Cas 1 : classes dans WEB-INF/classes ou dossier décompacté
+            if ("file".equals(resource.getProtocol())) {
                 String filePath = URLDecoder.decode(resource.getFile(), "UTF-8");
-                File directory = new File(filePath);
-                if (directory.exists() && directory.isDirectory()) {
-                    classes.addAll(findClassesInDirectory(directory, packageName));
-                }
-
-            } else if ("jar".equals(protocol)) {
-                // Cas 2 : classes dans un JAR (ex: FrameworkServlet.jar)
+                classes.addAll(findInDirectory(new File(filePath), packageName));
+            } else if ("jar".equals(resource.getProtocol())) {
                 String jarPath = resource.getPath();
-                // Format : file:/chemin/monapp.war!/WEB-INF/lib/monjar.jar!/com/mon/package
-                int separator = jarPath.indexOf("!");
-                if (separator == -1) continue;
-
-                String jarFilePath = jarPath.substring(5, separator); // enlève "file:"
-                jarFilePath = URLDecoder.decode(jarFilePath, "UTF-8");
-
-                try (JarFile jarFile = new JarFile(jarFilePath)) {
-                    Enumeration<JarEntry> entries = jarFile.entries();
+                int sep = jarPath.indexOf("!");
+                String jarFile = jarPath.substring(5, sep);
+                jarFile = URLDecoder.decode(jarFile, "UTF-8");
+                try (JarFile jar = new JarFile(jarFile)) {
+                    Enumeration<JarEntry> entries = jar.entries();
                     while (entries.hasMoreElements()) {
-                        JarEntry entry = entries.nextElement();
-                        String entryName = entry.getName();
-
-                        if (entryName.startsWith(path + "/")
-                                && entryName.endsWith(".class")
-                                && !entry.isDirectory()) {
-
-                            String className = entryName
-                                    .substring(0, entryName.length() - 6)
-                                    .replace('/', '.');
+                        JarEntry e = entries.nextElement();
+                        if (e.getName().startsWith(path + "/") && e.getName().endsWith(".class")) {
+                            String className = e.getName().replace("/", ".").substring(0, e.getName().length() - 6);
                             classes.add(Class.forName(className));
                         }
                     }
                 }
             }
         }
-
         return classes;
     }
 
-    /**
-     * Parcours récursif d'un répertoire de classes
-     */
-    private static List<Class<?>> findClassesInDirectory(File directory, String packageName)
-            throws ClassNotFoundException {
-        List<Class<?>> classes = new ArrayList<>();
-        if (!directory.exists()) return classes;
+    private static List<Class<?>> findInDirectory(File dir, String packageName) throws ClassNotFoundException {
+        List<Class<?>> list = new ArrayList<>();
+        if (!dir.exists()) return list;
+        File[] files = dir.listFiles();
+        if (files == null) return list;
 
-        File[] files = directory.listFiles();
-        if (files == null) return classes;
-
-        for (File file : files) {
-            if (file.isDirectory()) {
-                classes.addAll(findClassesInDirectory(file, packageName + "." + file.getName()));
-            } else if (file.getName().endsWith(".class")) {
-                String className = packageName + '.' + file.getName().substring(0, file.getName().length() - 6);
-                classes.add(Class.forName(className));
+        for (File f : files) {
+            if (f.isDirectory()) {
+                list.addAll(findInDirectory(f, packageName + "." + f.getName()));
+            } else if (f.getName().endsWith(".class")) {
+                String className = packageName + "." + f.getName().substring(0, f.getName().length() - 6);
+                list.add(Class.forName(className));
             }
         }
-        return classes;
-    }
-
-    /**
-     * Traite une classe annotée @Controller (inchangée)
-     */
-    private static void processController(Class<?> clazz, MappingStore mappingStore) {
-        Controller controllerAnnotation = clazz.getAnnotation(Controller.class);
-        String controllerUrl = controllerAnnotation.url();
-
-        if (!controllerUrl.startsWith("/")) {
-            controllerUrl = "/" + controllerUrl;
-        }
-        if (controllerUrl.endsWith("/")) {
-            controllerUrl = controllerUrl.substring(0, controllerUrl.length() - 1);
-        }
-
-        for (java.lang.reflect.Method method : clazz.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(com.framework.annotation.Path.class)) {
-                com.framework.annotation.Path pathAnnotation = method.getAnnotation(com.framework.annotation.Path.class);
-                String methodUrl = pathAnnotation.url();
-                String httpMethod = pathAnnotation.method().toUpperCase();
-
-                if (!methodUrl.startsWith("/")) {
-                    methodUrl = "/" + methodUrl;
-                }
-
-                String fullUrl = controllerUrl + methodUrl;
-                fullUrl = fullUrl.replaceAll("/+", "/");
-                if (fullUrl.isEmpty()) fullUrl = "/";
-
-                String key = httpMethod + ":" + fullUrl;
-
-                AnnotationStore annotationStore = new AnnotationStore(clazz, method, fullUrl, httpMethod);
-                mappingStore.addMapping(key, annotationStore);
-
-                System.out.println("Mapping enregistré: " + key + " -> " + clazz.getName() + "." + method.getName());
-            }
-        }
+        return list;
     }
 }
