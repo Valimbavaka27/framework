@@ -52,7 +52,22 @@ public class FrontServlet extends HttpServlet {
                     resp.setContentType("text/plain;charset=UTF-8");
                     resp.getWriter().print(s);
                 } else if (result instanceof ModelView mv) {
-                    req.getRequestDispatcher("/" + mv.getView()).forward(req, resp);
+                    // NOUVELLE PARTIE : injection des données
+                    if (mv.getData() != null) {
+                        for (var entry : mv.getData().entrySet()) {
+                            req.setAttribute(entry.getKey(), entry.getValue());
+                        }
+                    }
+
+                    String viewPath = mv.getView();
+                    if (!viewPath.startsWith("/")) {
+                        viewPath = "/" + viewPath;
+                    }
+                    if (!viewPath.endsWith(".jsp")) {
+                        viewPath += ".jsp";
+                    }
+
+                    req.getRequestDispatcher(viewPath).forward(req, resp);
                 } else {
                     resp.sendError(500, "Type de retour non supporté");
                 }
