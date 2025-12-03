@@ -4,16 +4,16 @@ import com.framework.mapping.AnnotationStore;
 import com.framework.mapping.MappingStore;
 import com.framework.model.ModelView;
 import com.framework.scanner.ControllerScanner;
+import com.framework.annotation.Param;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.*;
-
 import java.io.*;
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
 
 @WebServlet("/")
 public class FrontServlet extends HttpServlet {
-
     private MappingStore mappingStore;
 
     @Override
@@ -22,7 +22,6 @@ public class FrontServlet extends HttpServlet {
         if (packageName == null || packageName.trim().isEmpty()) {
             throw new ServletException("Paramètre 'controller-package' manquant dans web.xml");
         }
-
         try {
             mappingStore = ControllerScanner.scan(packageName.trim());
             getServletContext().setAttribute("mappingStore", mappingStore);
@@ -36,47 +35,56 @@ public class FrontServlet extends HttpServlet {
     @Override
     protected void service(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
         String path = req.getRequestURI().substring(req.getContextPath().length());
-        if (path.isEmpty()) path = "/";
+        if (path.isEmpty() || "/".equals(path)) path = "/";
         String method = req.getMethod().toUpperCase();
-
         AnnotationStore route = mappingStore.findMapping(path, method);
-
+        
         if (route != null) {
             try {
                 Object controller = route.getControllerClass().getDeclaredConstructor().newInstance();
                 Method m = route.getMethod();
                 m.setAccessible(true);
-                Object result = m.invoke(controller);
-
+                
+                // =============== SPRINT 6 SIMPLE (formulaire d'abord) ===============
+                Parameter[] parameters = m.getParameters();
+                Object[] args = new Object[parameters.length];
+                for (int i = 0; i < parameters.length; i++) {
+                    Parameter param = parameters[i];
+                    if (param.isAnnotationPresent(Param.class)) {
+                        String paramName = param.getAnnotation(Param.class).value();
+                        // On cherche seulement dans les paramètres du formulaire / query string
+                        String value = req.getParameter(paramName);
+                        args[i] = convert(value, param.getType());
+                    } else {
+                        args[i] = null;
+                    }
+                }
+                Object result = m.invoke(controller, args);
+                // =====================================================================
+                
                 if (result instanceof String s) {
-                    resp.setContentType("text/plain;charset=UTF-8");
+                    resp.setContentType("text/html;charset=UTF-8");
                     resp.getWriter().print(s);
-                } else if (result instanceof ModelView mv) {
-                    // NOUVELLE PARTIE : injection des données
+                }
+                else if (result instanceof ModelView mv) {
                     if (mv.getData() != null) {
-                        for (var entry : mv.getData().entrySet()) {
-                            req.setAttribute(entry.getKey(), entry.getValue());
-                        }
+                        mv.getData().forEach(req::setAttribute);
                     }
-
                     String viewPath = mv.getView();
-                    if (!viewPath.startsWith("/")) {
-                        viewPath = "/" + viewPath;
-                    }
-                    if (!viewPath.endsWith(".jsp")) {
-                        viewPath += ".jsp";
-                    }
-
+                    if (!viewPath.startsWith("/")) viewPath = "/" + viewPath;
+                    if (!viewPath.endsWith(".jsp")) viewPath += ".jsp";
+                    viewPath = "/WEB-INF/views" + viewPath;
                     req.getRequestDispatcher(viewPath).forward(req, resp);
-                } else {
+                }
+                else {
                     resp.sendError(500, "Type de retour non supporté");
                 }
             } catch (Exception e) {
                 e.printStackTrace();
-                resp.sendError(500, "Erreur dans le controller : " + e.getCause());
+                resp.sendError(500, "Erreur : " + e.getMessage());
             }
         } else {
-            // Fichier statique ou 404
+            // Fichiers statiques ou 404
             String realPath = getServletContext().getRealPath(path);
             File file = new File(realPath);
             if (file.exists() && file.isFile()) {
@@ -90,5 +98,16 @@ public class FrontServlet extends HttpServlet {
                 resp.sendError(404, "Page non trouvée : " + path);
             }
         }
+    }
+
+    // Méthodes utilitaires (inchangées)
+    private Object convert(String value, Class<?> targetType) {
+        if (value == null) return null;
+        if (targetType == String.class) return value;
+        if (targetType == int.class || targetType == Integer.class) return Integer.parseInt(value);
+        if (targetType == long.class || targetType == Long.class) return Long.parseLong(value);
+        if (targetType == double.class || targetType == Double.class) return Double.parseDouble(value);
+        if (targetType == boolean.class || targetType == Boolean.class) return Boolean.parseBoolean(value);
+        return value;
     }
 }
