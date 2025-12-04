@@ -50,4 +50,4 @@ public class MappingStore {
         dynamicMappings.forEach(store -> all.put(store.getHttpMethod() + ":" + store.getUrl(), store));
         return all;
     }
-}
+} 
