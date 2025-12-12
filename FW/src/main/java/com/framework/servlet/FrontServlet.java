@@ -37,6 +37,11 @@ public class FrontServlet extends HttpServlet {
     @Override
     protected void service(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
         String path = req.getRequestURI().substring(req.getContextPath().length());
+                // ======================= SPRINT 7 : DISTINCTION GET / POST =======================
+            // Sprint 7 demande que le framework gère séparément les méthodes HTTP :
+            // - GET  : Affichage, listing, formulaire, lecture
+            // - POST : Insertion, traitement de formulaire, enregistrement
+            // findMapping(path, method) permet d'associer une URL + une méthode HTTP 
         if (path.isEmpty() || "/".equals(path)) path = "/";
         String method = req.getMethod().toUpperCase();
 
@@ -146,6 +151,7 @@ public class FrontServlet extends HttpServlet {
     }
 
     // Méthode magique du Sprint 6-ter
+   // SPRINT 6-TER : INJECTION AUTOMATIQUE des paramètres dynamiques {id}
     private Map<String, String> extractPathParams(String pattern, String actualPath) {
         Map<String, String> params = new HashMap<>();
         String[] pat = pattern.split("/");
