@@ -4,6 +4,7 @@ import com.framework.mapping.AnnotationStore;
 import com.framework.mapping.MappingStore;
 import com.framework.model.ModelView;
 import com.framework.scanner.ControllerScanner;
+import com.framework.annotation.Json;          // ← Nouvelle annotation
 import com.framework.annotation.RequestParam;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
@@ -37,14 +38,12 @@ public class FrontServlet extends HttpServlet {
     @Override
     protected void service(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
         String path = req.getRequestURI().substring(req.getContextPath().length());
-        // ======================= SPRINT 7 : DISTINCTION GET / POST =======================
         if (path.isEmpty() || "/".equals(path)) path = "/";
         String method = req.getMethod().toUpperCase();
 
         AnnotationStore route = mappingStore.findMapping(path, method);
 
         if (route == null) {
-            // Fichier statique ou 404
             String realPath = getServletContext().getRealPath(path);
             File file = new File(realPath);
             if (file.exists() && file.isFile()) {
@@ -65,7 +64,7 @@ public class FrontServlet extends HttpServlet {
             Method m = route.getMethod();
             m.setAccessible(true);
 
-            // ========== SPRINT 6-TER : INJECTION AUTOMATIQUE DES {id} SANS -parameters ==========
+            // ========== SPRINT 6-TER : INJECTION AUTOMATIQUE ==========
             Map<String, String> pathParams = extractPathParams(route.getUrl(), path);
 
             Parameter[] parameters = m.getParameters();
@@ -78,15 +77,12 @@ public class FrontServlet extends HttpServlet {
                 boolean required = true;
                 String defaultValue = "";
 
-                // Cas 1 : @RequestParam présent → on utilise son nom
                 if (param.isAnnotationPresent(RequestParam.class)) {
                     RequestParam rp = param.getAnnotation(RequestParam.class);
                     paramName = rp.value();
                     required = rp.required();
                     defaultValue = rp.defaultValue();
-                }
-                // Cas 2 : AUCUNE annotation → on prend le i-ème placeholder de l'URL
-                else if (!pathParams.isEmpty()) {
+                } else if (!pathParams.isEmpty()) {
                     int placeholderIndex = 0;
                     for (String key : pathParams.keySet()) {
                         if (placeholderIndex == i) {
@@ -97,13 +93,11 @@ public class FrontServlet extends HttpServlet {
                     }
                 }
 
-                // Récupération de la valeur avec ordre de priorité
                 if (paramName != null) {
-                    value = pathParams.get(paramName);                    // 1. Dans l'URL
-                    if (value == null) value = req.getParameter(paramName); // 2. Dans query/form
+                    value = pathParams.get(paramName);
+                    if (value == null) value = req.getParameter(paramName);
                 }
 
-                // Gestion required / defaultValue
                 if (value == null || value.isEmpty()) {
                     if (required) {
                         String name = (paramName != null) ? paramName : "paramètre " + i;
@@ -116,16 +110,32 @@ public class FrontServlet extends HttpServlet {
             }
 
             Object result = m.invoke(controller, args);
-            // ===================================================================================
 
             // ======================= GESTION DU RETOUR =======================
 
-            // Cas 1 : String → affiché directement en texte/HTML
-            if (result instanceof String s) {
+            // SPRINT 9 : Si la méthode est annotée @Json → retour JSON API REST
+            if (m.isAnnotationPresent(Json.class)) {
+                resp.setContentType("application/json;charset=UTF-8");
+                resp.setStatus(200);
+
+                String jsonData = objectToJson(result);
+
+                String jsonResponse = """
+                    {
+                        "status": "success",
+                        "code": 200,
+                        "data": %s
+                    }
+                    """.formatted(jsonData == null ? "null" : jsonData);
+
+                resp.getWriter().print(jsonResponse);
+            }
+            // String → affiché directement
+            else if (result instanceof String s) {
                 resp.setContentType("text/html;charset=UTF-8");
                 resp.getWriter().print(s);
             }
-            // Cas 2 : ModelView → forward vers la JSP indiquée avec les données
+            // ModelView → forward JSP
             else if (result instanceof ModelView mv) {
                 if (mv.getData() != null) {
                     mv.getData().forEach(req::setAttribute);
@@ -136,13 +146,9 @@ public class FrontServlet extends HttpServlet {
                 viewPath = "/WEB-INF/views" + viewPath;
                 req.getRequestDispatcher(viewPath).forward(req, resp);
             }
-            // ======================= SPRINT 8 : RETOUR D'UN OBJET ARBITRAIRE =======================
-            // Cas 3 : Tout autre type (Map, List, POJO, etc.) → mis dans les attributs + forward vers result.jsp
+            // Sprint 8 : Autre objet → result.jsp
             else {
-                // On met l'objet retourné dans les attributs sous la clé "data" bis
                 req.setAttribute("data", result);
-
-                // Vue par défaut pour afficher les données brutes //
                 String defaultView = "/WEB-INF/views/result.jsp";
                 req.getRequestDispatcher(defaultView).forward(req, resp);
             }
@@ -156,7 +162,7 @@ public class FrontServlet extends HttpServlet {
         }
     }
 
-    // SPRINT 6-TER : INJECTION AUTOMATIQUE des paramètres dynamiques {id}
+    // SPRINT 6-TER
     private Map<String, String> extractPathParams(String pattern, String actualPath) {
         Map<String, String> params = new HashMap<>();
         String[] pat = pattern.split("/");
@@ -173,7 +179,7 @@ public class FrontServlet extends HttpServlet {
         return params;
     }
 
-    // Conversion (inchangée)
+    // Conversion paramètre
     private Object convert(String value, Class<?> targetType) {
         if (value == null) return null;
         if (targetType == String.class) return value;
@@ -184,5 +190,61 @@ public class FrontServlet extends HttpServlet {
             return Boolean.parseBoolean(value) || "on".equalsIgnoreCase(value) || "true".equalsIgnoreCase(value) || "1".equals(value);
         }
         return value;
+    }
+
+    // ======================= SPRINT 9 : CONVERSION OBJET → JSON (maison, sans dépendance) =======================
+    private String objectToJson(Object obj) {
+        if (obj == null) return "null";
+
+        if (obj instanceof String) {
+            return "\"" + obj.toString().replace("\"", "\\\"") + "\"";
+        }
+        if (obj instanceof Number || obj instanceof Boolean) {
+            return obj.toString();
+        }
+
+        if (obj instanceof java.util.Collection<?> coll) {
+            StringBuilder sb = new StringBuilder("[");
+            boolean first = true;
+            for (Object item : coll) {
+                if (!first) sb.append(",");
+                sb.append(objectToJson(item));
+                first = false;
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+
+        if (obj instanceof java.util.Map<?, ?> map) {
+            StringBuilder sb = new StringBuilder("{");
+            boolean first = true;
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (!first) sb.append(",");
+                sb.append("\"").append(entry.getKey().toString().replace("\"", "\\\"")).append("\":");
+                sb.append(objectToJson(entry.getValue()));
+                first = false;
+            }
+            sb.append("}");
+            return sb.toString();
+        }
+
+        // Objet personnalisé → via réflexion
+        StringBuilder sb = new StringBuilder("{");
+        java.lang.reflect.Field[] fields = obj.getClass().getDeclaredFields();
+        boolean first = true;
+        for (java.lang.reflect.Field field : fields) {
+            field.setAccessible(true);
+            try {
+                Object value = field.get(obj);
+                if (!first) sb.append(",");
+                sb.append("\"").append(field.getName()).append("\":");
+                sb.append(objectToJson(value));
+                first = false;
+            } catch (IllegalAccessException e) {
+                // ignore
+            }
+        }
+        sb.append("}");
+        return sb.toString();
     }
 }
