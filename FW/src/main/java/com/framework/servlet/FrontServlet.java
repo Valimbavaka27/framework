@@ -37,11 +37,7 @@ public class FrontServlet extends HttpServlet {
     @Override
     protected void service(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
         String path = req.getRequestURI().substring(req.getContextPath().length());
-                // ======================= SPRINT 7 : DISTINCTION GET / POST =======================
-            // Sprint 7 demande que le framework gère séparément les méthodes HTTP :
-            // - GET  : Affichage, listing, formulaire, lecture
-            // - POST : Insertion, traitement de formulaire, enregistrement
-            // findMapping(path, method) permet d'associer une URL + une méthode HTTP 
+        // ======================= SPRINT 7 : DISTINCTION GET / POST =======================
         if (path.isEmpty() || "/".equals(path)) path = "/";
         String method = req.getMethod().toUpperCase();
 
@@ -122,11 +118,14 @@ public class FrontServlet extends HttpServlet {
             Object result = m.invoke(controller, args);
             // ===================================================================================
 
-            // Gestion du retour
+            // ======================= GESTION DU RETOUR =======================
+
+            // Cas 1 : String → affiché directement en texte/HTML
             if (result instanceof String s) {
                 resp.setContentType("text/html;charset=UTF-8");
                 resp.getWriter().print(s);
             }
+            // Cas 2 : ModelView → forward vers la JSP indiquée avec les données
             else if (result instanceof ModelView mv) {
                 if (mv.getData() != null) {
                     mv.getData().forEach(req::setAttribute);
@@ -137,8 +136,15 @@ public class FrontServlet extends HttpServlet {
                 viewPath = "/WEB-INF/views" + viewPath;
                 req.getRequestDispatcher(viewPath).forward(req, resp);
             }
+            // ======================= SPRINT 8 : RETOUR D'UN OBJET ARBITRAIRE =======================
+            // Cas 3 : Tout autre type (Map, List, POJO, etc.) → mis dans les attributs + forward vers result.jsp
             else {
-                resp.sendError(500, "Type de retour non supporté");
+                // On met l'objet retourné dans les attributs sous la clé "data"
+                req.setAttribute("data", result);
+
+                // Vue par défaut pour afficher les données brutes
+                String defaultView = "/WEB-INF/views/result.jsp";
+                req.getRequestDispatcher(defaultView).forward(req, resp);
             }
 
         } catch (Exception e) {
@@ -150,8 +156,7 @@ public class FrontServlet extends HttpServlet {
         }
     }
 
-    // Méthode magique du Sprint 6-ter
-   // SPRINT 6-TER : INJECTION AUTOMATIQUE des paramètres dynamiques {id}
+    // SPRINT 6-TER : INJECTION AUTOMATIQUE des paramètres dynamiques {id}
     private Map<String, String> extractPathParams(String pattern, String actualPath) {
         Map<String, String> params = new HashMap<>();
         String[] pat = pattern.split("/");
