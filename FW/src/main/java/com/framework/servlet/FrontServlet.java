@@ -4,20 +4,32 @@ import com.framework.mapping.AnnotationStore;
 import com.framework.mapping.MappingStore;
 import com.framework.model.ModelView;
 import com.framework.scanner.ControllerScanner;
-import com.framework.annotation.Json;          // ← Nouvelle annotation
+import com.framework.annotation.Json;
+import com.framework.annotation.FileUpload;
 import com.framework.annotation.RequestParam;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
+import jakarta.servlet.annotation.MultipartConfig;  // ← Indispensable pour les uploads
 import jakarta.servlet.http.*;
 import java.io.*;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
 @WebServlet("/")
+@MultipartConfig(
+    location = "G:/TEST/sauvegard/",      // Dossier temporaire (peut être le même)
+    maxFileSize = 10485760,              // 10 Mo max par fichier
+    maxRequestSize = 52428800,           // 50 Mo max pour toute la requête
+    fileSizeThreshold = 1048576          // 1 Mo avant écriture disque
+)
 public class FrontServlet extends HttpServlet {
     private MappingStore mappingStore;
+
+    // Chemin de sauvegarde des fichiers uploadés
+    private static final String UPLOAD_DIRECTORY = "G:/TEST/sauvegard/";
 
     @Override
     public void init() throws ServletException {
@@ -29,6 +41,12 @@ public class FrontServlet extends HttpServlet {
             mappingStore = ControllerScanner.scan(packageName.trim());
             getServletContext().setAttribute("mappingStore", mappingStore);
             System.out.println("Framework initialisé : " + mappingStore.getAllMappings().size() + " routes chargées");
+
+            File uploadDir = new File(UPLOAD_DIRECTORY);
+            if (!uploadDir.exists()) {
+                uploadDir.mkdirs();
+                System.out.println("Dossier d'upload créé : " + UPLOAD_DIRECTORY);
+            }
         } catch (Exception e) {
             e.printStackTrace();
             throw new ServletException("Échec du scan des controllers", e);
@@ -64,8 +82,28 @@ public class FrontServlet extends HttpServlet {
             Method m = route.getMethod();
             m.setAccessible(true);
 
-            // ========== SPRINT 6-TER : INJECTION AUTOMATIQUE ==========
             Map<String, String> pathParams = extractPathParams(route.getUrl(), path);
+
+            // === Gestion multipart : lecture une seule fois de tous les parts ===
+            Map<String, String> textParams = new HashMap<>();
+            Map<String, Part> fileParts = new HashMap<>();
+
+            boolean isMultipart = req.getContentType() != null && req.getContentType().startsWith("multipart/form-data");
+            if (isMultipart) {
+                Collection<Part> parts = req.getParts();  // Fonctionne grâce à @MultipartConfig
+                for (Part part : parts) {
+                    String fieldName = part.getName();
+                    if (part.getSubmittedFileName() != null && !part.getSubmittedFileName().isEmpty()) {
+                        fileParts.put(fieldName, part);
+                    } else {
+                        try (InputStream is = part.getInputStream();
+                             BufferedReader reader = new BufferedReader(new InputStreamReader(is, "UTF-8"))) {
+                            String textValue = reader.lines().collect(java.util.stream.Collectors.joining());
+                            textParams.put(fieldName, textValue);
+                        }
+                    }
+                }
+            }
 
             Parameter[] parameters = m.getParameters();
             Object[] args = new Object[parameters.length];
@@ -77,30 +115,76 @@ public class FrontServlet extends HttpServlet {
                 boolean required = true;
                 String defaultValue = "";
 
+                // 1. Gestion du fichier (@FileUpload en byte[])
+                if (param.getType() == byte[].class && param.isAnnotationPresent(FileUpload.class)) {
+                    FileUpload fu = param.getAnnotation(FileUpload.class);
+                    String fieldName = fu.value();
+                    Part part = fileParts.get(fieldName);
+
+                    if (part == null || part.getSubmittedFileName() == null || part.getSubmittedFileName().isEmpty()) {
+                        args[i] = null;
+                        continue;
+                    }
+
+                    try (InputStream is = part.getInputStream()) {
+                        byte[] bytes = is.readAllBytes();
+                        args[i] = bytes;
+
+                        String originalFileName = part.getSubmittedFileName();
+                        String finalFileName = originalFileName;
+                        File savedFile = new File(UPLOAD_DIRECTORY + finalFileName);
+                        int counter = 1;
+
+                        while (savedFile.exists()) {
+                            String nameWithoutExt = originalFileName.substring(0, originalFileName.lastIndexOf('.'));
+                            String ext = originalFileName.substring(originalFileName.lastIndexOf('.'));
+                            finalFileName = nameWithoutExt + "_" + counter + ext;
+                            savedFile = new File(UPLOAD_DIRECTORY + finalFileName);
+                            counter++;
+                        }
+
+                        try (FileOutputStream fos = new FileOutputStream(savedFile)) {
+                            fos.write(bytes);
+                        }
+
+                        req.setAttribute("uploadedFileName", finalFileName);
+                        req.setAttribute("uploadedOriginalName", originalFileName);
+                        req.setAttribute("uploadedFileSize", bytes.length);
+                        req.setAttribute("uploadedFileType", part.getContentType());
+                        req.setAttribute("uploadedFilePath", savedFile.getAbsolutePath());
+                    }
+                    continue;
+                }
+
+                // 2. Gestion des @RequestParam
                 if (param.isAnnotationPresent(RequestParam.class)) {
                     RequestParam rp = param.getAnnotation(RequestParam.class);
                     paramName = rp.value();
                     required = rp.required();
                     defaultValue = rp.defaultValue();
-                } else if (!pathParams.isEmpty()) {
-                    int placeholderIndex = 0;
-                    for (String key : pathParams.keySet()) {
-                        if (placeholderIndex == i) {
-                            paramName = key;
-                            break;
-                        }
-                        placeholderIndex++;
+
+                    if (isMultipart) {
+                        value = textParams.get(paramName);
+                    } else {
+                        value = req.getParameter(paramName);
                     }
                 }
-
-                if (paramName != null) {
-                    value = pathParams.get(paramName);
-                    if (value == null) value = req.getParameter(paramName);
+                // 3. Gestion des path parameters
+                else if (!pathParams.isEmpty()) {
+                    int idx = 0;
+                    for (String key : pathParams.keySet()) {
+                        if (idx == i) {
+                            paramName = key;
+                            value = pathParams.get(key);
+                            break;
+                        }
+                        idx++;
+                    }
                 }
 
                 if (value == null || value.isEmpty()) {
                     if (required) {
-                        String name = (paramName != null) ? paramName : "paramètre " + i;
+                        String name = paramName != null ? paramName : "paramètre " + i;
                         throw new IllegalArgumentException("Paramètre requis manquant : " + name);
                     }
                     value = defaultValue;
@@ -111,15 +195,11 @@ public class FrontServlet extends HttpServlet {
 
             Object result = m.invoke(controller, args);
 
-            // ======================= GESTION DU RETOUR =======================
-
-            // SPRINT 9 : Si la méthode est annotée @Json → retour JSON API REST
+            // Gestion du retour
             if (m.isAnnotationPresent(Json.class)) {
                 resp.setContentType("application/json;charset=UTF-8");
                 resp.setStatus(200);
-
                 String jsonData = objectToJson(result);
-
                 String jsonResponse = """
                     {
                         "status": "success",
@@ -127,16 +207,11 @@ public class FrontServlet extends HttpServlet {
                         "data": %s
                     }
                     """.formatted(jsonData == null ? "null" : jsonData);
-
                 resp.getWriter().print(jsonResponse);
-            }
-            // String → affiché directement
-            else if (result instanceof String s) {
+            } else if (result instanceof String s) {
                 resp.setContentType("text/html;charset=UTF-8");
                 resp.getWriter().print(s);
-            }
-            // ModelView → forward JSP
-            else if (result instanceof ModelView mv) {
+            } else if (result instanceof ModelView mv) {
                 if (mv.getData() != null) {
                     mv.getData().forEach(req::setAttribute);
                 }
@@ -145,12 +220,9 @@ public class FrontServlet extends HttpServlet {
                 if (!viewPath.endsWith(".jsp")) viewPath += ".jsp";
                 viewPath = "/WEB-INF/views" + viewPath;
                 req.getRequestDispatcher(viewPath).forward(req, resp);
-            }
-            // Sprint 8 : Autre objet → result.jsp
-            else {
+            } else {
                 req.setAttribute("data", result);
-                String defaultView = "/WEB-INF/views/result.jsp";
-                req.getRequestDispatcher(defaultView).forward(req, resp);
+                req.getRequestDispatcher("/WEB-INF/views/result.jsp").forward(req, resp);
             }
 
         } catch (Exception e) {
@@ -162,7 +234,6 @@ public class FrontServlet extends HttpServlet {
         }
     }
 
-    // SPRINT 6-TER
     private Map<String, String> extractPathParams(String pattern, String actualPath) {
         Map<String, String> params = new HashMap<>();
         String[] pat = pattern.split("/");
@@ -179,7 +250,6 @@ public class FrontServlet extends HttpServlet {
         return params;
     }
 
-    // Conversion paramètre
     private Object convert(String value, Class<?> targetType) {
         if (value == null) return null;
         if (targetType == String.class) return value;
@@ -192,7 +262,6 @@ public class FrontServlet extends HttpServlet {
         return value;
     }
 
-    // ======================= SPRINT 9 : CONVERSION OBJET → JSON (maison, sans dépendance) =======================
     private String objectToJson(Object obj) {
         if (obj == null) return "null";
 
@@ -228,7 +297,6 @@ public class FrontServlet extends HttpServlet {
             return sb.toString();
         }
 
-        // Objet personnalisé → via réflexion
         StringBuilder sb = new StringBuilder("{");
         java.lang.reflect.Field[] fields = obj.getClass().getDeclaredFields();
         boolean first = true;
