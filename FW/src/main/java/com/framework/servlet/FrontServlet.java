@@ -139,10 +139,10 @@ public class FrontServlet extends HttpServlet {
             // ======================= SPRINT 8 : RETOUR D'UN OBJET ARBITRAIRE =======================
             // Cas 3 : Tout autre type (Map, List, POJO, etc.) → mis dans les attributs + forward vers result.jsp
             else {
-                // On met l'objet retourné dans les attributs sous la clé "data"
+                // On met l'objet retourné dans les attributs sous la clé "data" bis
                 req.setAttribute("data", result);
 
-                // Vue par défaut pour afficher les données brutes
+                // Vue par défaut pour afficher les données brutes //
                 String defaultView = "/WEB-INF/views/result.jsp";
                 req.getRequestDispatcher(defaultView).forward(req, resp);
             }
